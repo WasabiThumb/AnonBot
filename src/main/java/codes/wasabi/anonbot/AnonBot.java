@@ -4,11 +4,9 @@ import codes.wasabi.anonbot.cmd.CommandManager;
 import codes.wasabi.anonbot.data.DMState;
 import codes.wasabi.anonbot.store.Stores;
 import codes.wasabi.anonbot.util.Encryption;
-import net.dv8tion.jda.api.EmbedBuilder;
-import net.dv8tion.jda.api.JDA;
-import net.dv8tion.jda.api.JDABuilder;
-import net.dv8tion.jda.api.Permission;
+import net.dv8tion.jda.api.*;
 import net.dv8tion.jda.api.entities.*;
+import net.dv8tion.jda.api.entities.sticker.StickerItem;
 import net.dv8tion.jda.api.events.ReadyEvent;
 import net.dv8tion.jda.api.events.ShutdownEvent;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
@@ -20,6 +18,9 @@ import org.jetbrains.annotations.NotNull;
 
 import javax.crypto.SecretKey;
 import javax.security.auth.login.LoginException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.*;
 import java.awt.Color;
 import java.util.concurrent.Executors;
@@ -85,7 +86,7 @@ public class AnonBot extends ListenerAdapter {
     private void proxyMessage(@NotNull MessageChannel destination, @NotNull Message message) {
         User author = message.getAuthor();
         long authorID = author.getIdLong();
-        Random random = new Random(authorID);
+        Random random = new Random(authorID + ((long) Math.floor(System.currentTimeMillis() / 600000d)));
         //
         EmbedBuilder builder = new EmbedBuilder();
         builder.setColor(Color.getHSBColor(random.nextFloat(), 1f, 1f));
@@ -100,14 +101,43 @@ public class AnonBot extends ListenerAdapter {
         }
         builder.setFooter("Token: " + token);
         List<Message.Attachment> attachments = message.getAttachments();
+        String feature = null;
         if (attachments.size() > 0) {
             StringBuilder value = new StringBuilder();
             for (int i=0; i < attachments.size(); i++) {
-                if (i > 0) value.append("\n");
-                value.append(attachments.get(i).getProxyUrl());
+                String url = attachments.get(i).getProxyUrl();
+                if (i == 0) {
+                    feature = url;
+                } else {
+                    value.append("\n");
+                }
+                value.append(url);
             }
             builder.addField("Attachments", value.toString(), false);
         }
+        if (feature == null) feature = message.getContentDisplay().split(" ")[0];
+        //
+        try {
+            URL url = new URL(feature);
+            String protocol = url.getProtocol();
+            if (protocol.equalsIgnoreCase("http") || protocol.equalsIgnoreCase("https")) {
+                String host = url.getHost();
+                if (host.equalsIgnoreCase("tenor.com") || host.equalsIgnoreCase("txnor.com")) {
+                    url = new URL(feature + ".gif");
+                }
+                HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                connection.setInstanceFollowRedirects(true);
+                InputStream is = connection.getInputStream();
+                URL fin = connection.getURL();
+                is.close();
+                String type = Objects.requireNonNullElse(connection.getContentType(), "text/plain").toLowerCase();
+                if (type.contains("image/") || type.contains("video/")) {
+                    builder.setImage(fin.toString());
+                }
+            }
+        } catch (Exception ignored) { }
+        //
+        List<StickerItem> stickers = message.getStickers();
         //
         List<MessageEmbed> embeds = new ArrayList<>();
         embeds.add(builder.build());
@@ -115,7 +145,11 @@ public class AnonBot extends ListenerAdapter {
         //
         message.delete().queue();
         //
-        destination.sendMessageEmbeds(embeds).queue((Message m) -> {
+        MessageBuilder mb = new MessageBuilder();
+        mb.setEmbeds(embeds);
+        mb.setStickers(stickers);
+        //
+        destination.sendMessage(mb.build()).queue((Message m) -> {
             Stores.OWNERS.set(m.getIdLong(), authorID);
         });
     }
